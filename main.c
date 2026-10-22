@@ -124,12 +124,82 @@ static void test_strcpy(void)
 	printf("  resultat visible : \"%s\"\n", ft_strcpy(small, "hello 42"));
 }
 
+/*                              ft_strcmp                             */
+/* ------------------------------------------------------------------ */
+ 
+/*
+** Retourne -1, 0 ou 1 selon le signe de x.
+** (x > 0) vaut 1 ou 0, (x < 0) vaut 1 ou 0 : la soustraction donne le signe.
+*/
+static int sign(int x)
+{
+	return ((x > 0) - (x < 0));
+}
+ 
+/*
+** Le man de strcmp ne garantit que le SIGNE du resultat (< 0, 0 ou > 0),
+** pas sa valeur exacte. On compare donc les signes : c'est ce test qui
+** compte. On affiche aussi les deux valeurs pour info.
+*/
+static void test_strcmp_one(const char *s1, const char *s2, const char *name)
+{
+	int expected = strcmp(s1, s2);
+	int got = ft_strcmp(s1, s2);
+ 
+	check(sign(expected) == sign(got), name);
+	if (sign(expected) != sign(got))
+		printf("       attendu %d, obtenu %d\n", expected, got);
+	else if (expected != got)
+		printf("       (meme signe, valeurs differentes : libc %d, toi %d)\n",
+			expected, got);
+}
+ 
+static void test_strcmp(void)
+{
+	static char long1[10000];
+	static char long2[10000];
+ 
+	/* Deux longues chaines identiques... */
+	memset(long1, 'c', sizeof(long1) - 1);
+	long1[sizeof(long1) - 1] = '\0';
+	memcpy(long2, long1, sizeof(long1));
+ 
+	printf("\n=== ft_strcmp ===\n");
+	test_strcmp_one("hello", "hello", "chaines identiques");
+	test_strcmp_one("", "", "deux chaines vides");
+	test_strcmp_one("", "a", "vide vs non vide");
+	test_strcmp_one("a", "", "non vide vs vide");
+	test_strcmp_one("abc", "abd", "difference au dernier caractere");
+	test_strcmp_one("abd", "abc", "difference au dernier (inverse)");
+	test_strcmp_one("xbc", "abc", "difference au premier caractere");
+	test_strcmp_one("abc", "abcd", "s1 est un prefixe de s2");
+	test_strcmp_one("abcd", "abc", "s2 est un prefixe de s1");
+	test_strcmp_one("A", "a", "majuscule vs minuscule");
+	test_strcmp_one("hello\0abc", "hello\0xyz", "s'arrete au premier \\0");
+ 
+	/*
+	** Le piege du signe : '\xff' vaut 255 en unsigned char, mais -1 en
+	** char signe. strcmp compare en UNSIGNED : "\xff" > "a".
+	** Si tu lis avec mov au lieu de movzx, ces tests echouent.
+	*/
+	test_strcmp_one("\xff", "a", "caractere 255 vs 'a' (unsigned !)");
+	test_strcmp_one("a", "\xff", "'a' vs caractere 255 (unsigned !)");
+	test_strcmp_one("\x80", "\x7f", "128 vs 127 (unsigned !)");
+	test_strcmp_one("\xc3\xa9", "e", "'e accent' UTF-8 vs 'e'");
+ 
+	test_strcmp_one(long1, long2, "longues chaines identiques");
+	long2[sizeof(long2) - 2] = 'd'; /* ... qui different au dernier caractere */
+	test_strcmp_one(long1, long2, "longues chaines, diff a la fin");
+}
+
+
 /* ------------------------------------------------------------------ */
 
 int main(void)
 {
 	test_strlen();
 	test_strcpy();
+	test_strcmp();
 
 	printf("\n%d OK, %d KO\n", g_ok, g_ko);
 	/* Code de sortie 1 si au moins un test a rate (pratique en script) */
