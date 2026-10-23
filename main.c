@@ -11,6 +11,9 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>   /* write, read, pipe, close */
+#include <fcntl.h>    /* open, O_WRONLY */
+#include <errno.h>    /* errno, EBADF, EFAULT */
 #include "libasm.h"
 
 /* Compteurs globaux pour afficher un resume a la fin */
@@ -192,6 +195,116 @@ static void test_strcmp(void)
 	test_strcmp_one(long1, long2, "longues chaines, diff a la fin");
 }
 
+/* ------------------------------------------------------------------ */
+/*                              ft_write                              */
+/* ------------------------------------------------------------------ */
+ 
+/*
+** Cas d'ERREUR : on appelle write puis ft_write avec les memes arguments,
+** et on compare la valeur de retour ET errno.
+** errno est remis a 0 avant chaque appel, pour etre sur que c'est bien
+** l'appel qu'on teste qui l'a modifie.
+*/
+static void test_write_error(int fd, const void *buf, size_t count,
+	const char *name)
+{
+	ssize_t expected_ret;
+	int expected_errno;
+	ssize_t got_ret;
+	int got_errno;
+ 
+	errno = 0;
+	expected_ret = write(fd, buf, count);
+	expected_errno = errno;
+ 
+	errno = 0;
+	got_ret = ft_write(fd, buf, count);
+	got_errno = errno;
+ 
+	check(expected_ret == got_ret && expected_errno == got_errno, name);
+	if (expected_ret != got_ret || expected_errno != got_errno)
+		printf("       attendu ret %zd, errno %d (%s)\n"
+			"       obtenu  ret %zd, errno %d (%s)\n",
+			expected_ret, expected_errno, strerror(expected_errno),
+			got_ret, got_errno, strerror(got_errno));
+}
+ 
+/*
+** Cas de SUCCES : on ecrit dans un pipe, puis on relit ce qui est sorti
+** de l'autre cote. Ca permet de verifier que ft_write a ecrit EXACTEMENT
+** les bons octets, pas seulement qu'elle renvoie le bon nombre.
+**
+** Un pipe = un "tuyau" a deux bouts : fds[1] pour ecrire, fds[0] pour lire.
+*/
+static void test_write_pipe(const char *s, size_t count, const char *name)
+{
+	int fds[2];
+	char buf[100];
+	ssize_t ret;
+	ssize_t n;
+ 
+	if (pipe(fds) == -1)
+	{
+		perror("pipe");
+		return ;
+	}
+	ret = ft_write(fds[1], s, count);
+	close(fds[1]);   /* on ferme le bout ecriture : read verra la fin */
+	n = read(fds[0], buf, sizeof(buf));
+	close(fds[0]);
+ 
+	check(ret == (ssize_t)count && n == (ssize_t)count
+		&& memcmp(buf, s, count) == 0, name);
+	if (ret != (ssize_t)count)
+		printf("       retour attendu %zu, obtenu %zd\n", count, ret);
+	else if (n != (ssize_t)count || memcmp(buf, s, count) != 0)
+		printf("       le contenu ecrit n'est pas le bon\n");
+}
+ 
+static void test_write(void)
+{
+	int fds[2];
+	int devnull;
+	ssize_t ret;
+ 
+	printf("\n=== ft_write ===\n");
+ 
+	/* --- Succes : le contenu et le retour --- */
+	test_write_pipe("hello", 5, "ecrit \"hello\" (5 octets)");
+	test_write_pipe("", 0, "count = 0 -> renvoie 0");
+	test_write_pipe("hello world", 5, "count < longueur -> n'ecrit que 5 octets");
+	test_write_pipe("ab\0cd", 5, "ecrit aussi les \\0 (write ignore les chaines)");
+ 
+	/* --- Succes : errno ne doit PAS etre modifie --- */
+	devnull = open("/dev/null", O_WRONLY);
+	errno = 4242;
+	ret = ft_write(devnull, "abc", 3);
+	check(ret == 3 && errno == 4242, "succes -> errno inchange");
+	close(devnull);
+ 
+	/* --- Erreurs : retour -1 et le bon errno --- */
+	test_write_error(-1, "abc", 3, "fd = -1 -> EBADF");
+	test_write_error(42, "abc", 3, "fd 42 non ouvert -> EBADF");
+	test_write_error(1, NULL, 5, "buf = NULL -> EFAULT (pas EBADF !)");
+ 
+	/* Ecrire dans le bout LECTURE d'un pipe est interdit -> EBADF */
+	if (pipe(fds) == 0)
+	{
+		test_write_error(fds[0], "abc", 3, "bout lecture d'un pipe -> EBADF");
+		close(fds[0]);
+		close(fds[1]);
+	}
+ 
+	/*
+	** Affichage visible sur le terminal.
+	** fflush : printf garde son texte dans un buffer, write ecrit tout de
+	** suite. Sans fflush, l'ordre d'affichage peut etre melange.
+	*/
+	fflush(stdout);
+	ret = ft_write(1, "  [visible] hello depuis ft_write\n", 34);
+	check(ret == 34, "ecrit sur la sortie standard (fd 1)");
+}
+
 
 /* ------------------------------------------------------------------ */
 
@@ -200,6 +313,7 @@ int main(void)
 	test_strlen();
 	test_strcpy();
 	test_strcmp();
+	test_write();
 
 	printf("\n%d OK, %d KO\n", g_ok, g_ko);
 	/* Code de sortie 1 si au moins un test a rate (pratique en script) */
