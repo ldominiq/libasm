@@ -10,6 +10,7 @@
 */
 
 #include <stdio.h>
+#include <stdlib.h>   // free
 #include <string.h>
 #include <unistd.h>   /* write, read, pipe, close */
 #include <fcntl.h>    /* open, O_WRONLY */
@@ -305,6 +306,177 @@ static void test_write(void)
 	check(ret == 34, "ecrit sur la sortie standard (fd 1)");
 }
 
+/* ------------------------------------------------------------------ */
+/*                              ft_read                               */
+/* ------------------------------------------------------------------ */
+
+/*
+** Cas d'ERREUR : on compare read et ft_read (retour ET errno).
+** Meme principe que test_write_error.
+*/
+static void test_read_error(int fd, void *buf, size_t count, const char *name)
+{
+	ssize_t expected_ret;
+	int expected_errno;
+	ssize_t got_ret;
+	int got_errno;
+
+	errno = 0;
+	expected_ret = read(fd, buf, count);
+	expected_errno = errno;
+
+	errno = 0;
+	got_ret = ft_read(fd, buf, count);
+	got_errno = errno;
+
+	check(expected_ret == got_ret && expected_errno == got_errno, name);
+	if (expected_ret != got_ret || expected_errno != got_errno)
+		printf("       attendu ret %zd, errno %d (%s)\n"
+			"       obtenu  ret %zd, errno %d (%s)\n",
+			expected_ret, expected_errno, strerror(expected_errno),
+			got_ret, got_errno, strerror(got_errno));
+}
+
+/*
+** Cas de SUCCES : on met "data" dans un pipe avec le vrai write,
+** puis ft_read lit au plus "count" octets depuis l'autre bout.
+** On verifie le retour ET les octets lus.
+*/
+static void test_read_pipe(const char *data, size_t data_len, size_t count,
+	size_t expected, const char *name)
+{
+	int fds[2];
+	char buf[100];
+	ssize_t ret;
+
+	if (pipe(fds) == -1)
+	{
+		perror("pipe");
+		return ;
+	}
+	if (write(fds[1], data, data_len) != (ssize_t)data_len)
+		perror("write");
+	close(fds[1]);   /* plus rien a ecrire : apres les donnees, ce sera EOF */
+
+	memset(buf, 'X', sizeof(buf));
+	ret = ft_read(fds[0], buf, count);
+	close(fds[0]);
+
+	check(ret == (ssize_t)expected && memcmp(buf, data, expected) == 0, name);
+	if (ret != (ssize_t)expected)
+		printf("       retour attendu %zu, obtenu %zd\n", expected, ret);
+	else if (memcmp(buf, data, expected) != 0)
+		printf("       les octets lus ne sont pas les bons\n");
+}
+
+static void test_read(void)
+{
+	int fds[2];
+	int fd;
+	char buf[100];
+	char zeros[10];
+	ssize_t ret;
+
+	printf("\n=== ft_read ===\n");
+
+	/* --- Succes --- */
+	test_read_pipe("hello", 5, 100, 5, "lit \"hello\" (5 octets dispo)");
+	test_read_pipe("hello world", 11, 5, 5, "count < dispo -> lit 5 octets");
+	test_read_pipe("ab\0cd", 5, 100, 5, "lit aussi les \\0");
+	test_read_pipe("", 0, 100, 0, "fin de fichier (EOF) -> renvoie 0");
+	test_read_pipe("hello", 5, 0, 0, "count = 0 -> renvoie 0");
+
+	/* /dev/zero : un "fichier" infini rempli de 0 */
+	fd = open("/dev/zero", O_RDONLY);
+	memset(buf, 'X', sizeof(buf));
+	memset(zeros, 0, sizeof(zeros));
+	errno = 4242;
+	ret = ft_read(fd, buf, 10);
+	check(ret == 10 && memcmp(buf, zeros, 10) == 0, "lit 10 octets de /dev/zero");
+	check(errno == 4242, "succes -> errno inchange");
+	check(buf[10] == 'X', "n'ecrit pas plus loin que count");
+
+	/* --- Erreurs : retour -1 et le bon errno --- */
+	test_read_error(-1, buf, 10, "fd = -1 -> EBADF");
+	test_read_error(42, buf, 10, "fd 42 non ouvert -> EBADF");
+	test_read_error(fd, NULL, 10, "buf = NULL -> EFAULT (pas EBADF !)");
+	close(fd);
+
+	/* Lire depuis le bout ECRITURE d'un pipe est interdit -> EBADF */
+	if (pipe(fds) == 0)
+	{
+		test_read_error(fds[1], buf, 10, "bout ecriture d'un pipe -> EBADF");
+		close(fds[0]);
+		close(fds[1]);
+	}
+
+	/* Lire un dossier comme un fichier -> EISDIR (encore un autre errno) */
+	fd = open(".", O_RDONLY);
+	test_read_error(fd, buf, 10, "lire un dossier -> EISDIR");
+	close(fd);
+}
+
+/* ------------------------------------------------------------------ */
+/*                              ft_strdup                             */
+/* ------------------------------------------------------------------ */
+
+/*
+** Teste ft_strdup sur une chaine s :
+**  - le resultat n'est pas NULL ;
+**  - c'est une NOUVELLE zone memoire (adresse differente de s) ;
+**  - le contenu est le meme, '\0' final compris (strcmp le verifie) ;
+**  - on peut le liberer avec free (sinon : crash ou erreur valgrind).
+*/
+static void test_strdup_one(const char *s, const char *name)
+{
+	char *dup;
+
+	dup = ft_strdup(s);
+	check(dup != NULL, name);
+	if (dup == NULL)
+		return ;
+	check(dup != s, "  -> nouvelle adresse (pas s lui-meme)");
+	check(strcmp(dup, s) == 0, "  -> meme contenu");
+	if (strcmp(dup, s) != 0)
+		printf("       attendu \"%s\", obtenu \"%s\"\n", s, dup);
+	free(dup);
+}
+
+static void test_strdup(void)
+{
+	static char long_str[10000];
+	char original[] = "hello";
+	char *dup;
+
+	memset(long_str, 'd', sizeof(long_str) - 1);
+	long_str[sizeof(long_str) - 1] = '\0';
+
+	printf("\n=== ft_strdup ===\n");
+	test_strdup_one("hello", "chaine simple");
+	test_strdup_one("", "chaine vide");
+	test_strdup_one("a", "un seul caractere");
+	test_strdup_one("\xff\x80\xc3\xa9", "caracteres >= 128 (non-ASCII)");
+	test_strdup_one(long_str, "chaine de 9999 caracteres");
+
+	/* strdup copie jusqu'au PREMIER '\0', comme strlen */
+	dup = ft_strdup("hello\0world");
+	check(dup != NULL && strcmp(dup, "hello") == 0, "s'arrete au premier \\0");
+	free(dup);
+
+	/*
+	** La copie doit etre INDEPENDANTE de l'original :
+	** modifier l'un ne doit pas changer l'autre.
+	*/
+	dup = ft_strdup(original);
+	if (dup != NULL)
+	{
+		dup[0] = 'J';
+		check(original[0] == 'h', "modifier la copie ne change pas l'original");
+		original[1] = 'a';
+		check(dup[1] == 'e', "modifier l'original ne change pas la copie");
+		free(dup);
+	}
+}
 
 /* ------------------------------------------------------------------ */
 
@@ -314,6 +486,8 @@ int main(void)
 	test_strcpy();
 	test_strcmp();
 	test_write();
+	test_read();
+	test_strdup();
 
 	printf("\n%d OK, %d KO\n", g_ok, g_ko);
 	/* Code de sortie 1 si au moins un test a rate (pratique en script) */
