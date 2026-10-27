@@ -1,8 +1,4 @@
 /*
-** Tests de ft_strlen et ft_strcpy.
-** Principe : on appelle la vraie fonction (libc) et la notre sur les memes
-** entrees, et on compare les resultats.
-**
 ** Compilation :
 **   make
 **   cc -g -Wall -Wextra -Werror main.c -L. -lasm -o test
