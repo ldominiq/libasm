@@ -11,6 +11,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>   // free
+#include <stdint.h>
 #include <string.h>
 #include <unistd.h>   /* write, read, pipe, close */
 #include <fcntl.h>    /* open, O_WRONLY */
@@ -479,6 +480,130 @@ static void test_strdup(void)
 }
 
 /* ------------------------------------------------------------------ */
+/*                              ft_calloc                             */
+/* ------------------------------------------------------------------ */
+
+/* Renvoie 1 si les "n" octets de p valent tous 0 */
+static int is_zeroed(const unsigned char *p, size_t n)
+{
+	size_t i;
+
+	i = 0;
+	while (i < n)
+	{
+		if (p[i] != 0)
+			return (0);
+		i++;
+	}
+	return (1);
+}
+
+/*
+** Cas normal : ft_calloc(nmemb, size) doit renvoyer nmemb * size octets
+** tous a 0.
+**
+** Piege : de la memoire toute neuve vaut souvent deja 0, meme sans memset.
+** Pour que le test serve a quelque chose, on salit d'abord un bloc de la
+** meme taille avec 'X', puis on le libere : malloc va tres probablement
+** redonner ce meme bloc a ft_calloc. S'il n'est pas remis a 0, on le voit.
+*/
+static void test_calloc_one(size_t nmemb, size_t size, const char *name)
+{
+	size_t total = nmemb * size;
+	unsigned char *dirty;
+	unsigned char *p;
+
+	dirty = malloc(total);
+	if (dirty != NULL)
+	{
+		memset(dirty, 'X', total);
+		free(dirty);
+	}
+
+	p = ft_calloc(nmemb, size);
+	check(p != NULL, name);
+	if (p == NULL)
+		return ;
+	check(is_zeroed(p, total), "  -> tous les octets valent 0");
+	/* On ecrit sur TOUT le bloc : si ft_calloc a alloue trop peu,
+	   valgrind le signale ("Invalid write") */
+	memset(p, 'a', total);
+	free(p);
+}
+
+/*
+** Debordement : nmemb * size ne tient pas sur 64 bits.
+** ft_calloc doit renvoyer NULL et mettre errno a ENOMEM (12).
+*/
+static void test_calloc_overflow(size_t nmemb, size_t size, const char *name)
+{
+	void *p;
+
+	errno = 0;
+	p = ft_calloc(nmemb, size);
+	check(p == NULL && errno == ENOMEM, name);
+	if (p != NULL)
+	{
+		printf("       attendu NULL, obtenu %p (debordement non detecte)\n", p);
+		free(p);
+	}
+	else if (errno != ENOMEM)
+		printf("       errno attendu %d (ENOMEM), obtenu %d (%s)\n",
+			ENOMEM, errno, strerror(errno));
+}
+
+static void test_calloc(void)
+{
+	void *expected;
+	void *got;
+
+	printf("\n=== ft_calloc ===\n");
+
+	/* --- Cas normaux --- */
+	test_calloc_one(10, 4, "10 x 4 octets");
+	test_calloc_one(1, 1, "1 x 1 octet");
+	test_calloc_one(4, 1, "4 x 1 octet");
+	test_calloc_one(1000, 1000, "1000 x 1000 octets (1 Mo)");
+	test_calloc_one(3, sizeof(long), "3 x sizeof(long)");
+
+	/*
+	** Taille 0 : on compare avec le vrai calloc.
+	** Avec glibc, calloc(0, 5) renvoie un pointeur valide (pas NULL),
+	** qu'on doit pouvoir passer a free.
+	*/
+	expected = calloc(0, 5);
+	got = ft_calloc(0, 5);
+	check((expected == NULL) == (got == NULL), "nmemb = 0 (comme calloc)");
+	free(expected);
+	free(got);
+
+	expected = calloc(5, 0);
+	got = ft_calloc(5, 0);
+	check((expected == NULL) == (got == NULL), "size = 0 (comme calloc)");
+	free(expected);
+	free(got);
+
+	/* --- Debordement de nmemb * size --- */
+	test_calloc_overflow(SIZE_MAX, 2, "SIZE_MAX x 2 -> NULL + ENOMEM");
+	test_calloc_overflow(2, SIZE_MAX, "2 x SIZE_MAX -> NULL + ENOMEM");
+	/*
+	** Le plus piegeux : 2^32 x 2^32 = 2^64, qui vaut EXACTEMENT 0
+	** une fois tronque a 64 bits. Sans detection, on ferait malloc(0),
+	** qui REUSSIT : le bug ne se voit pas sans ce test.
+	*/
+	test_calloc_overflow((size_t)1 << 32, (size_t)1 << 32,
+		"2^32 x 2^32 (tronque = 0 !) -> NULL + ENOMEM");
+	test_calloc_overflow(SIZE_MAX / 2 + 1, 2,
+		"(SIZE_MAX/2 + 1) x 2 (tronque = 0 !) -> NULL + ENOMEM");
+
+	/*
+	** Pas de debordement, mais beaucoup trop gros pour la machine :
+	** c'est malloc qui echoue, et c'est lui qui met errno = ENOMEM.
+	*/
+	test_calloc_overflow(SIZE_MAX, 1, "SIZE_MAX x 1 (trop gros) -> NULL + ENOMEM");
+}
+
+/* ------------------------------------------------------------------ */
 
 int main(void)
 {
@@ -488,6 +613,7 @@ int main(void)
 	test_write();
 	test_read();
 	test_strdup();
+	test_calloc();
 
 	printf("\n%d OK, %d KO\n", g_ok, g_ko);
 	/* Code de sortie 1 si au moins un test a rate (pratique en script) */
